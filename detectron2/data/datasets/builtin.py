@@ -18,6 +18,7 @@ To add new dataset, refer to the tutorial "docs/DATASETS.md".
 """
 
 import os
+import pdb
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
 
@@ -251,9 +252,75 @@ def register_all_ade20k(root):
         )
 
 
+#pdb.set_trace()
+
+# ==== for Geococo data ===========
+from .geococo import load_geococo_dicts
+
+# my directory 
+
+ROOT_PATH = "/data/datasets/yet_another_DOTAv2/GeoCOCO/"
+
+DOTA_SPLITS = {
+    "dota_train": (
+        "Train/",
+        "Train/GeoCOCO.json",
+        "",
+    ),
+    "dota_val":(
+        "Val/",
+        "Val/GeoCOCO.json",
+        "",
+    ),
+}
+
+CATEGORIES = {
+    "airplane": [
+        {"color": [0, 255, 0], "id": 0, "name": "airplane"},
+    ],
+    "oil-tanker": [
+        {"color": [0, 255, 0], "id": 0, "name": "oil-tanker"},
+    ],
+    "special-ship": [
+        {"color": [0, 255, 0], "id": 0, "name": "special-ship"},
+    ],
+    "train": [
+        {"color": [0, 255, 0], "id": 0, "name": "train"},
+    ],
+    "car": [
+        {"color": [0, 255, 0], "id": 0, "name": "car"},
+    ],
+}
+
+
+for dataset_name, (image_path, json_path, scene_path) in DOTA_SPLITS.items():
+    json_path = os.path.join(ROOT_PATH, json_path)
+    image_path = os.path.join(ROOT_PATH, image_path)
+    scene_path = os.path.join(ROOT_PATH, scene_path)
+
+    load_dataset_dicts = load_geococo_dicts
+    # categories = CATEGORIES[dataset_name.split("_")[0]]
+    # thing_colors = [k["color"] for k in categories]
+    # thing_classes = [k["name"] for k in categories]
+
+    DatasetCatalog.register(
+        dataset_name,
+        lambda image_path=image_path, json_path=json_path: load_dataset_dicts(
+            image_path, json_path
+        ),
+    )
+
+    MetadataCatalog.get(dataset_name).set(
+        #thing_classes=thing_classes,
+        #thing_colors=thing_colors,
+        json_file=json_path,
+        dirname=image_path,
+        scene_path=scene_path,
+    )
+
 # True for open source;
 # Internally at fb, we register them elsewhere
-if __name__.endswith(".builtin"):
+if __name__.endswith(".builtin"): #end name is .builtin
     # Assume pre-defined datasets live in `./datasets`.
     _root = os.getenv("DETECTRON2_DATASETS", "datasets")
     register_all_coco(_root)
