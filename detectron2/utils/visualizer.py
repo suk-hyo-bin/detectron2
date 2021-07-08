@@ -10,6 +10,9 @@ import matplotlib.colors as mplc
 import matplotlib.figure as mplfigure
 import pycocotools.mask as mask_util
 import torch
+import pdb
+
+
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from PIL import Image
 
@@ -1216,4 +1219,246 @@ class Visualizer:
             output (VisImage): the image output containing the visualizations added
             to the image.
         """
+        return self.output
+
+
+
+from typing import Dict, List, Optional, Union
+
+import cv2
+import numpy as np
+from detectron2.structures import BoxMode
+from detectron2.structures.instances import Instances
+from detectron2.utils.colormap import random_color
+from detectron2.utils.visualizer import VisImage, Visualizer, _create_text_labels
+from torch import Tensor
+
+_SMALL_OBJECT_AREA_THRESH = 1000
+
+########################### new_added rotated RPointVisualizer
+class RPointVisualizer(Visualizer):
+    """
+    회전이 있는 박스를 테두리로 시각화합니다.
+    """
+
+    def __init__(self, img_rgb, metadata, scale=1.0, score_thresh=0.01, heatmap_magnitude=1.6):
+        """
+        Init
+
+        @param img_rgb: (H, W, C) shape의 numpy array입니다. H, W는 각각 높이와 넓이를 의미합니다.
+                        C는 채널의 수입니다. Matplotlib를 사용하므로 RGB 형식이어야 합니다.
+                        또한 이미지는 [0, 255] 범위여야 합니다.
+        @param metadata: 이미지의 메타데이터
+        @param scale: 이미지 스케일 정도
+        @param score_thresh: 이미지의 스코어 필터링 수치
+        @param heatmap_magnitude: 히트맵 크기
+        """
+        super().__init__(img_rgb, metadata, scale)
+        self.score_thresh = score_thresh
+        self.pred_color = (1, 0, 0)
+        self.gt_color = (0, 1, 0)
+        self.heatmap_magnitude = heatmap_magnitude
+
+    def draw_dataset_dict(self, dic: Dict) -> VisImage:
+        """
+        Detectron2 데이터셋 형식을 그립니다.
+
+        @param dic:
+        @return:
+        """
+        annos = dic.get("annotations", None)
+        if annos:
+            boxes = [BoxMode.convert(x["bbox"], x["bbox_mode"], BoxMode.XYXY_ABS) for x in annos]
+
+            labels = [x["category_id"] for x in annos]
+            names = self.metadata.get("thing_classes", None)
+            if names:
+                labels = [names[i] for i in labels]
+
+            rboxes = None
+            if "rbox" in annos[0]:
+                rboxes = [x["rbox"] for x in annos]
+
+            self.overlay_instances(labels=labels, bboxes=boxes, rboxes=rboxes)
+
+        return self.output
+
+    def draw_instance_predictions(
+        self,
+        predictions: Instances,
+        center_heatmap: Optional[Union[Tensor, np.ndarray]] = None,
+        ground_truths: Optional[Dict] = None,
+    ) -> VisImage:
+        """
+        예측된 Instance를 그립니다.
+
+        @param predictions: 예측된 Instance
+        @param center_heatmap: 중앙 heatmap 크기
+        @param ground_truths: Ground-truth
+        @return:
+        """
+        pred_boxes = predictions.pred_boxes
+        classes = predictions.pred_classes
+        scores = predictions.scores
+
+        if not isinstance(pred_boxes, np.ndarray):
+            pred_boxes = self._convert_boxes(pred_boxes.to("cpu"))
+        if not isinstance(classes, np.ndarray):
+            classes = predictions.pred_classes.detach().cpu().numpy()
+        if not isinstance(scores, np.ndarray):
+            scores = predictions.scores.detach().cpu().numpy()
+
+        # filter out the predictions with low confidence score
+        keep_idxs = scores > self.score_thresh
+        pred_boxes = pred_boxes[keep_idxs]
+        scores = scores[keep_idxs]
+
+        labels = (
+            _create_text_labels(None, scores, self.metadata.get("thing_classes", None))
+            if self.metadata
+            else [str(i) for i in classes]
+        )
+        pdb.set_trace()
+        colors = (
+            [[x / 255 for x in self.metadata.thing_colors[c]] for c in classes]
+            if self.metadata is not None
+            else None
+        )
+
+        bboxes = None
+        rboxes = None
+        if len(pred_boxes) > 0 and len(pred_boxes[0]) == 5:
+            rboxes = pred_boxes
+        else:
+            bboxes = pred_boxes
+
+        if center_heatmap is not None:
+            if isinstance(center_heatmap, Tensor):
+                center_heatmap = center_heatmap.detach().cpu().numpy()
+
+        self.overlay_instances(
+            bboxes=bboxes,
+            rboxes=rboxes,
+            labels=labels,
+            assigned_colors=colors,
+            center_heatmap=center_heatmap,
+            ground_truths=ground_truths,
+        )
+
+        return self.output
+
+    def overlay_instances(
+        self,
+        center_heatmap: Optional[np.ndarray] = None,
+        bboxes: Optional[Union[Tensor, List]] = None,
+        rboxes: Optional[Tensor] = None,
+        labels: Optional[List[str]] = None,
+        ground_truths: Optional[Dict] = None,
+        assigned_colors: Optional[List[np.ndarray]] = None,
+        alpha=0.5,
+    ) -> VisImage:
+        """
+        최종적으로 이미지위에 예측된 박스와 gound truths를 그립니다.
+
+        @param center_heatmap: 중앙 heatmap 크기
+        @param bboxes: bboxes 혹은 rboxes를 사용
+        @param rboxes: bboxes 혹은 rboxes를 사용
+        @param labels: 라벨이 존재할 경우 박스와 함께 표시
+        @param ground_truths: Ground-truth
+        @param assigned_colors: 박스 테두리 색
+        @param alpha:이미지 알파값
+        @return:
+        """
+
+        if center_heatmap is not None:
+            center_heatmap = np.max(center_heatmap, axis=0)
+            center_heatmap = np.clip(center_heatmap * self.heatmap_magnitude, 0.0, 1.0)
+            alpha_map = alpha * cv2.resize(center_heatmap, (self.output.width, self.output.height))
+            alpha_map = np.expand_dims(alpha_map, -1)
+
+            heatmap_image = cv2.cvtColor(
+                (center_heatmap * 255).astype(np.uint8), cv2.COLOR_GRAY2RGB
+            )
+            heatmap_image = cv2.applyColorMap(heatmap_image, cv2.COLORMAP_RAINBOW)
+            heatmap_image = cv2.resize(heatmap_image, (self.output.width, self.output.height))
+
+            self.output.img = heatmap_image * alpha_map * (1 / alpha) + self.output.img * (
+                alpha - alpha_map
+            )
+
+        num_instances = len(bboxes) if bboxes is not None else len(rboxes)
+
+        if assigned_colors is None:
+            assigned_colors = [random_color(rgb=True, maximum=1) for _ in range(num_instances)]
+
+        if ground_truths:
+            if "bboxes" in ground_truths.keys():
+                gt_boxes = ground_truths["bboxes"]
+                for i in range(len(gt_boxes)):
+                    self.draw_box(gt_boxes[i], edge_color=self.gt_color)
+                    self.draw_circle(
+                        (
+                            (gt_boxes[i][0] + gt_boxes[i][2]) / 2,
+                            (gt_boxes[i][1] + gt_boxes[i][3]) / 2,
+                        ),
+                        self.gt_color,
+                        radius=1,
+                    )
+
+            if "rboxes" in ground_truths.keys():
+                gt_rboxes = ground_truths["rboxes"]
+                gt_colors = [self.gt_color] * len(gt_rboxes)
+                self.overlay_rotated_instances(
+                    boxes=gt_rboxes, labels=None, assigned_colors=gt_colors
+                )
+
+                for i in range(len(gt_rboxes)):
+                    self.draw_circle((gt_rboxes[i][0], gt_rboxes[i][1]), self.gt_color, radius=1)
+
+        if bboxes is not None:
+            for i in range(num_instances):
+                color = assigned_colors[i]
+                self.draw_box(bboxes[i], edge_color=color)
+                self.draw_circle(
+                    ((bboxes[i][0] + bboxes[i][2]) / 2, (bboxes[i][1] + bboxes[i][3]) / 2),
+                    color,
+                    radius=1,
+                )
+
+                if labels is not None:
+                    x0, y0, x1, y1 = bboxes[i]
+                    text_pos = (x0, y0)
+                    horiz_align = "left"
+                    instance_area = (y1 - y0) * (x1 - x0)
+                    if (
+                        instance_area < _SMALL_OBJECT_AREA_THRESH * self.output.scale
+                        or y1 - y0 < 40 * self.output.scale
+                    ):
+                        if y1 >= self.output.height - 5:
+                            text_pos = (x1, y0)
+                        else:
+                            text_pos = (x0, y1)
+
+                    height_ratio = (y1 - y0) / np.sqrt(self.output.height * self.output.width)
+                    lighter_color = self._change_color_brightness(color, brightness_factor=0.7)
+                    font_size = (
+                        np.clip((height_ratio - 0.02) / 0.08 + 1, 1.2, 2)
+                        * 0.5
+                        * self._default_font_size
+                    )
+                    self.draw_text(
+                        labels[i],
+                        text_pos,
+                        color=lighter_color,
+                        horizontal_alignment=horiz_align,
+                        font_size=font_size,
+                    )
+
+        if rboxes is not None:
+            self.overlay_rotated_instances(
+                boxes=np.array(rboxes), labels=labels, assigned_colors=assigned_colors
+            )
+            for i in range(num_instances):
+                self.draw_circle((rboxes[i][0], rboxes[i][1]), self.pred_color, radius=1)
+
         return self.output

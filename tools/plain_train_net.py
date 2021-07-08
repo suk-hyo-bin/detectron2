@@ -18,7 +18,7 @@ You may want to write your own script with your datasets and other customization
 Compared to "train_net.py", this script supports fewer default features.
 It also includes fewer abstraction, therefore is easier to add custom logic.
 """
-
+import pdb
 import logging
 import os
 from collections import OrderedDict
@@ -38,6 +38,7 @@ from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
     COCOEvaluator,
+    COCOEvaluatorExtend,
     COCOPanopticEvaluator,
     DatasetEvaluators,
     LVISEvaluator,
@@ -49,6 +50,8 @@ from detectron2.evaluation import (
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
 from detectron2.utils.events import EventStorage
+from detectron2.evaluation import COCOEvaluator, inference_on_dataset
+from detectron2.data import build_detection_test_loader
 
 logger = logging.getLogger("detectron2")
 
@@ -73,7 +76,7 @@ def get_evaluator(cfg, dataset_name, output_folder=None):
             )
         )
     if evaluator_type in ["coco", "coco_panoptic_seg"]:
-        evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
+        evaluator_list.append(COCOEvaluatorExtend(dataset_name, cfg, output_dir=output_folder))
     if evaluator_type == "coco_panoptic_seg":
         evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
     if evaluator_type == "cityscapes_instance":
@@ -107,10 +110,14 @@ def do_test(cfg, model):
             cfg, dataset_name, os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name)
         )
         results_i = inference_on_dataset(model, data_loader, evaluator)
+        print("result")
+        print(results_i)
+        pdb.set_trace()
         results[dataset_name] = results_i
         if comm.is_main_process():
             logger.info("Evaluation results for {} in csv format:".format(dataset_name))
             print_csv_format(results_i)
+
     if len(results) == 1:
         results = list(results.values())[0]
     return results

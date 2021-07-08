@@ -22,8 +22,8 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 # fruits_nuts_metadata = MetadataCatalog.get("fruits_nuts")
 # dataset_dicts = DatasetCatalog.get("fruits_nuts")
 
-from detectron2.data.datasets.geococo import load_geococo_dicts
-dataset_dicts = load_geococo_dicts("/data/datasets/yet_another_DOTAv2/GeoCOCO/Train", "/data/datasets/yet_another_DOTAv2/GeoCOCO/Train/GeoCOCO.json")
+#from detectron2.data.datasets.geococo import load_geococo_dicts
+#dataset_dicts = load_geococo_dicts("/data/datasets/yet_another_DOTAv2/GeoCOCO/Train", "/data/datasets/yet_another_DOTAv2/GeoCOCO/Train/GeoCOCO.json")
 
 # import random
 # a = 0
@@ -44,18 +44,18 @@ import os
 
 cfg = get_cfg()
 #cfg.merge_from_file("/data/workspace/hyobin/detectron2/configs/COCO-Detection/faster_rcnn_R_50_C4_1x.yaml")
-cfg.merge_from_file("/data/workspace/hyobin/detectron2/configs/COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml")
+cfg.merge_from_file("/data/workspace/hyobin/detectron2/configs/GEOCOCO-Detection/basic.yaml")
 #cfg.DATASETS.TRAIN = ("fruits_nuts",)
-cfg.DATASETS.TRAIN = ("dota_train",)
+# cfg.DATASETS.TRAIN = ("dotatrain",)
 
-cfg.DATASETS.TEST = ()   # no metrics implemented for this dataset
-cfg.DATALOADER.NUM_WORKERS = 2
-cfg.MODEL.WEIGHTS = "detectron2://COCO-Detection/faster_rcnn_R_50_C4_1x/137257644/model_final_721ade.pkl"  # initialize from model zoo
-cfg.SOLVER.IMS_PER_BATCH = 2
-cfg.SOLVER.BASE_LR = 0.00002
-cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough, but you can certainly train longer
-cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 50   # faster, and good enough for this toy dataset
-cfg.MODEL.ROI_HEADS.NUM_CLASSES = 50  # 3 classes (data, fig, hazelnut)
+# cfg.DATASETS.TEST = ()   # no metrics implemented for this dataset
+# cfg.DATALOADER.NUM_WORKERS = 2
+# cfg.MODEL.WEIGHTS = "detectron2://COCO-Detection/faster_rcnn_R_50_C4_1x/137257644/model_final_721ade.pkl"  # initialize from model zoo
+# cfg.SOLVER.IMS_PER_BATCH = 2
+# cfg.SOLVER.BASE_LR = 0.00002
+# cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough, but you can certainly train longer
+# cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 50   # faster, and good enough for this toy dataset
+# cfg.MODEL.ROI_HEADS.NUM_CLASSES = 19  # 3 classes (data, fig, hazelnut)
 
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 #pdb.set_trace()

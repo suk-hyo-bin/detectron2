@@ -8,6 +8,11 @@ import logging
 import numpy as np
 import os
 import pickle
+import cv2
+from tqdm import tqdm
+
+from collections import defaultdict
+
 from collections import OrderedDict
 import pycocotools.mask as mask_util
 import torch
@@ -25,336 +30,353 @@ from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import create_small_table
 
 from .evaluator import DatasetEvaluator
+from detectron2.utils.visualizer import Visualizer, RPointVisualizer
+from detectron2.layers import batched_nms, batched_nms_rotated
 
+import cv2
+import numpy as np
+import torch
+from detectron2.data import MetadataCatalog, detection_utils
+#from detectron2.evaluation.coco_evaluation import COCOEvaluator
+from detectron2.layers import batched_nms_rotated, cat
+from detectron2.structures import Boxes, BoxMode, Instances
+from detectron2.structures.rotated_boxes import pairwise_iou_rotated
+from detectron2.utils.events import TensorboardXWriter, get_event_storage
+from fvcore.common.file_io import PathManager
+#from pycocotools import mask as maskUtils
+from pycocotools.cocoeval import COCOeval
+from sklearn.metrics import pairwise_distances_argmin
+from tqdm import tqdm
+from detectron2.utils.events import EventStorage, EventWriter
+################# new evaluator ######################
+# class COCOEvaluator(DatasetEvaluator):
+#     """
+#     Evaluate AR for object proposals, AP for instance detection/segmentation, AP
+#     for keypoint detection outputs using COCO's metrics.
+#     See http://cocodataset.org/#detection-eval and
+#     http://cocodataset.org/#keypoints-eval to understand its metrics.
+#     The metrics range from 0 to 100 (instead of 0 to 1), where a -1 or NaN means
+#     the metric cannot be computed (e.g. due to no predictions made).
 
-class COCOEvaluator(DatasetEvaluator):
-    """
-    Evaluate AR for object proposals, AP for instance detection/segmentation, AP
-    for keypoint detection outputs using COCO's metrics.
-    See http://cocodataset.org/#detection-eval and
-    http://cocodataset.org/#keypoints-eval to understand its metrics.
-    The metrics range from 0 to 100 (instead of 0 to 1), where a -1 or NaN means
-    the metric cannot be computed (e.g. due to no predictions made).
+#     In addition to COCO, this evaluator is able to support any bounding box detection,
+#     instance segmentation, or keypoint detection dataset.
+#     """
 
-    In addition to COCO, this evaluator is able to support any bounding box detection,
-    instance segmentation, or keypoint detection dataset.
-    """
+#     def __init__(
+#         self,
+#         dataset_name,
+#         tasks=None,
+#         distributed=True,
+#         output_dir=None,
+#         *,
+#         use_fast_impl=True,
+#         kpt_oks_sigmas=(),
+#     ):
+#         """
+#         Args:
+#             dataset_name (str): name of the dataset to be evaluated.
+#                 It must have either the following corresponding metadata:
 
-    def __init__(
-        self,
-        dataset_name,
-        tasks=None,
-        distributed=True,
-        output_dir=None,
-        *,
-        use_fast_impl=True,
-        kpt_oks_sigmas=(),
-    ):
-        """
-        Args:
-            dataset_name (str): name of the dataset to be evaluated.
-                It must have either the following corresponding metadata:
+#                     "json_file": the path to the COCO format annotation
 
-                    "json_file": the path to the COCO format annotation
+#                 Or it must be in detectron2's standard dataset format
+#                 so it can be converted to COCO format automatically.
+#             tasks (tuple[str]): tasks that can be evaluated under the given
+#                 configuration. A task is one of "bbox", "segm", "keypoints".
+#                 By default, will infer this automatically from predictions.
+#             distributed (True): if True, will collect results from all ranks and run evaluation
+#                 in the main process.
+#                 Otherwise, will only evaluate the results in the current process.
+#             output_dir (str): optional, an output directory to dump all
+#                 results predicted on the dataset. The dump contains two files:
 
-                Or it must be in detectron2's standard dataset format
-                so it can be converted to COCO format automatically.
-            tasks (tuple[str]): tasks that can be evaluated under the given
-                configuration. A task is one of "bbox", "segm", "keypoints".
-                By default, will infer this automatically from predictions.
-            distributed (True): if True, will collect results from all ranks and run evaluation
-                in the main process.
-                Otherwise, will only evaluate the results in the current process.
-            output_dir (str): optional, an output directory to dump all
-                results predicted on the dataset. The dump contains two files:
+#                 1. "instances_predictions.pth" a file that can be loaded with `torch.load` and
+#                    contains all the results in the format they are produced by the model.
+#                 2. "coco_instances_results.json" a json file in COCO's result format.
+#             use_fast_impl (bool): use a fast but **unofficial** implementation to compute AP.
+#                 Although the results should be very close to the official implementation in COCO
+#                 API, it is still recommended to compute results with the official API for use in
+#                 papers. The faster implementation also uses more RAM.
+#             kpt_oks_sigmas (list[float]): The sigmas used to calculate keypoint OKS.
+#                 See http://cocodataset.org/#keypoints-eval
+#                 When empty, it will use the defaults in COCO.
+#                 Otherwise it should be the same length as ROI_KEYPOINT_HEAD.NUM_KEYPOINTS.
+#         """
+#         self._logger = logging.getLogger(__name__)
+#         self._distributed = distributed
+#         self._output_dir = output_dir
+#         self._use_fast_impl = use_fast_impl
 
-                1. "instances_predictions.pth" a file that can be loaded with `torch.load` and
-                   contains all the results in the format they are produced by the model.
-                2. "coco_instances_results.json" a json file in COCO's result format.
-            use_fast_impl (bool): use a fast but **unofficial** implementation to compute AP.
-                Although the results should be very close to the official implementation in COCO
-                API, it is still recommended to compute results with the official API for use in
-                papers. The faster implementation also uses more RAM.
-            kpt_oks_sigmas (list[float]): The sigmas used to calculate keypoint OKS.
-                See http://cocodataset.org/#keypoints-eval
-                When empty, it will use the defaults in COCO.
-                Otherwise it should be the same length as ROI_KEYPOINT_HEAD.NUM_KEYPOINTS.
-        """
-        self._logger = logging.getLogger(__name__)
-        self._distributed = distributed
-        self._output_dir = output_dir
-        self._use_fast_impl = use_fast_impl
+#         if tasks is not None and isinstance(tasks, CfgNode):
+#             kpt_oks_sigmas = (
+#                 tasks.TEST.KEYPOINT_OKS_SIGMAS if not kpt_oks_sigmas else kpt_oks_sigmas
+#             )
+#             self._logger.warn(
+#                 "COCO Evaluator instantiated using config, this is deprecated behavior."
+#                 " Please pass in explicit arguments instead."
+#             )
+#             self._tasks = None  # Infering it from predictions should be better
+#         else:
+#             self._tasks = tasks
 
-        if tasks is not None and isinstance(tasks, CfgNode):
-            kpt_oks_sigmas = (
-                tasks.TEST.KEYPOINT_OKS_SIGMAS if not kpt_oks_sigmas else kpt_oks_sigmas
-            )
-            self._logger.warn(
-                "COCO Evaluator instantiated using config, this is deprecated behavior."
-                " Please pass in explicit arguments instead."
-            )
-            self._tasks = None  # Infering it from predictions should be better
-        else:
-            self._tasks = tasks
+#         self._cpu_device = torch.device("cpu")
 
-        self._cpu_device = torch.device("cpu")
+#         self._metadata = MetadataCatalog.get(dataset_name)
+#         if not hasattr(self._metadata, "json_file"):
+#             self._logger.info(
+#                 f"'{dataset_name}' is not registered by `register_coco_instances`."
+#                 " Therefore trying to convert it to COCO format ..."
+#             )
 
-        self._metadata = MetadataCatalog.get(dataset_name)
-        if not hasattr(self._metadata, "json_file"):
-            self._logger.info(
-                f"'{dataset_name}' is not registered by `register_coco_instances`."
-                " Therefore trying to convert it to COCO format ..."
-            )
+#             cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
+#             self._metadata.json_file = cache_path
+#             convert_to_coco_json(dataset_name, cache_path)
 
-            cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
-            self._metadata.json_file = cache_path
-            convert_to_coco_json(dataset_name, cache_path)
+#         json_file = PathManager.get_local_path(self._metadata.json_file)
+#         with contextlib.redirect_stdout(io.StringIO()):
+#             self._coco_api = COCO(json_file)
 
-        json_file = PathManager.get_local_path(self._metadata.json_file)
-        with contextlib.redirect_stdout(io.StringIO()):
-            self._coco_api = COCO(json_file)
+#         # Test set json files do not contain annotations (evaluation must be
+#         # performed using the COCO evaluation server).
+#         self._do_evaluation = "annotations" in self._coco_api.dataset
+#         if self._do_evaluation:
+#             self._kpt_oks_sigmas = kpt_oks_sigmas
 
-        # Test set json files do not contain annotations (evaluation must be
-        # performed using the COCO evaluation server).
-        self._do_evaluation = "annotations" in self._coco_api.dataset
-        if self._do_evaluation:
-            self._kpt_oks_sigmas = kpt_oks_sigmas
+#     def reset(self):
+#         self._predictions = []
 
-    def reset(self):
-        self._predictions = []
+#     def process(self, inputs, outputs):
+#         """
+#         Args:
+#             inputs: the inputs to a COCO model (e.g., GeneralizedRCNN).
+#                 It is a list of dict. Each dict corresponds to an image and
+#                 contains keys like "height", "width", "file_name", "image_id".
+#             outputs: the outputs of a COCO model. It is a list of dicts with key
+#                 "instances" that contains :class:`Instances`.
+#         """
+#         for input, output in zip(inputs, outputs):
+#             prediction = {"image_id": input["image_id"]}
 
-    def process(self, inputs, outputs):
-        """
-        Args:
-            inputs: the inputs to a COCO model (e.g., GeneralizedRCNN).
-                It is a list of dict. Each dict corresponds to an image and
-                contains keys like "height", "width", "file_name", "image_id".
-            outputs: the outputs of a COCO model. It is a list of dicts with key
-                "instances" that contains :class:`Instances`.
-        """
-        for input, output in zip(inputs, outputs):
-            prediction = {"image_id": input["image_id"]}
+#             if "instances" in output:
+#                 instances = output["instances"].to(self._cpu_device)
+#                 prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
+#             if "proposals" in output:
+#                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
+#             if len(prediction) > 1:
+#                 self._predictions.append(prediction)
 
-            if "instances" in output:
-                instances = output["instances"].to(self._cpu_device)
-                prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
-            if "proposals" in output:
-                prediction["proposals"] = output["proposals"].to(self._cpu_device)
-            if len(prediction) > 1:
-                self._predictions.append(prediction)
+#     def evaluate(self, img_ids=None):
+#         """
+#         Args:
+#             img_ids: a list of image IDs to evaluate on. Default to None for the whole dataset
+#         """
+#         if self._distributed:
+#             comm.synchronize()
+#             predictions = comm.gather(self._predictions, dst=0)
+#             predictions = list(itertools.chain(*predictions))
 
-    def evaluate(self, img_ids=None):
-        """
-        Args:
-            img_ids: a list of image IDs to evaluate on. Default to None for the whole dataset
-        """
-        if self._distributed:
-            comm.synchronize()
-            predictions = comm.gather(self._predictions, dst=0)
-            predictions = list(itertools.chain(*predictions))
+#             if not comm.is_main_process():
+#                 return {}
+#         else:
+#             predictions = self._predictions
 
-            if not comm.is_main_process():
-                return {}
-        else:
-            predictions = self._predictions
+#         if len(predictions) == 0:
+#             self._logger.warning("[COCOEvaluator] Did not receive valid predictions.")
+#             return {}
 
-        if len(predictions) == 0:
-            self._logger.warning("[COCOEvaluator] Did not receive valid predictions.")
-            return {}
+#         if self._output_dir:
+#             PathManager.mkdirs(self._output_dir)
+#             file_path = os.path.join(self._output_dir, "instances_predictions.pth")
+#             with PathManager.open(file_path, "wb") as f:
+#                 torch.save(predictions, f)
 
-        if self._output_dir:
-            PathManager.mkdirs(self._output_dir)
-            file_path = os.path.join(self._output_dir, "instances_predictions.pth")
-            with PathManager.open(file_path, "wb") as f:
-                torch.save(predictions, f)
+#         self._results = OrderedDict()
+#         if "proposals" in predictions[0]:
+#             self._eval_box_proposals(predictions)
+#         if "instances" in predictions[0]:
+#             self._eval_predictions(predictions, img_ids=img_ids)
+#         # Copy so the caller can do whatever with results
+#         return copy.deepcopy(self._results)
 
-        self._results = OrderedDict()
-        if "proposals" in predictions[0]:
-            self._eval_box_proposals(predictions)
-        if "instances" in predictions[0]:
-            self._eval_predictions(predictions, img_ids=img_ids)
-        # Copy so the caller can do whatever with results
-        return copy.deepcopy(self._results)
+#     def _tasks_from_predictions(self, predictions):
+#         """
+#         Get COCO API "tasks" (i.e. iou_type) from COCO-format predictions.
+#         """
+#         tasks = {"bbox"}
+#         for pred in predictions:
+#             if "segmentation" in pred:
+#                 tasks.add("segm")
+#             if "keypoints" in pred:
+#                 tasks.add("keypoints")
+#         return sorted(tasks)
 
-    def _tasks_from_predictions(self, predictions):
-        """
-        Get COCO API "tasks" (i.e. iou_type) from COCO-format predictions.
-        """
-        tasks = {"bbox"}
-        for pred in predictions:
-            if "segmentation" in pred:
-                tasks.add("segm")
-            if "keypoints" in pred:
-                tasks.add("keypoints")
-        return sorted(tasks)
+#     def _eval_predictions(self, predictions, img_ids=None):
+#         """
+#         Evaluate predictions. Fill self._results with the metrics of the tasks.
+#         """
+#         self._logger.info("Preparing results for COCO format ...")
+#         coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
+#         tasks = self._tasks or self._tasks_from_predictions(coco_results)
 
-    def _eval_predictions(self, predictions, img_ids=None):
-        """
-        Evaluate predictions. Fill self._results with the metrics of the tasks.
-        """
-        self._logger.info("Preparing results for COCO format ...")
-        coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
-        tasks = self._tasks or self._tasks_from_predictions(coco_results)
+#         # unmap the category ids for COCO
+#         if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
+#             dataset_id_to_contiguous_id = self._metadata.thing_dataset_id_to_contiguous_id
+#             all_contiguous_ids = list(dataset_id_to_contiguous_id.values())
+#             num_classes = len(all_contiguous_ids)
+#             assert min(all_contiguous_ids) == 0 and max(all_contiguous_ids) == num_classes - 1
 
-        # unmap the category ids for COCO
-        if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
-            dataset_id_to_contiguous_id = self._metadata.thing_dataset_id_to_contiguous_id
-            all_contiguous_ids = list(dataset_id_to_contiguous_id.values())
-            num_classes = len(all_contiguous_ids)
-            assert min(all_contiguous_ids) == 0 and max(all_contiguous_ids) == num_classes - 1
+#             reverse_id_mapping = {v: k for k, v in dataset_id_to_contiguous_id.items()}
+#             for result in coco_results:
+#                 category_id = result["category_id"]
+#                 assert category_id < num_classes, (
+#                     f"A prediction has class={category_id}, "
+#                     f"but the dataset only has {num_classes} classes and "
+#                     f"predicted class id should be in [0, {num_classes - 1}]."
+#                 )
+#                 result["category_id"] = reverse_id_mapping[category_id]
 
-            reverse_id_mapping = {v: k for k, v in dataset_id_to_contiguous_id.items()}
-            for result in coco_results:
-                category_id = result["category_id"]
-                assert category_id < num_classes, (
-                    f"A prediction has class={category_id}, "
-                    f"but the dataset only has {num_classes} classes and "
-                    f"predicted class id should be in [0, {num_classes - 1}]."
-                )
-                result["category_id"] = reverse_id_mapping[category_id]
+#         if self._output_dir:
+#             file_path = os.path.join(self._output_dir, "coco_instances_results.json")
+#             self._logger.info("Saving results to {}".format(file_path))
+#             with PathManager.open(file_path, "w") as f:
+#                 f.write(json.dumps(coco_results))
+#                 f.flush()
 
-        if self._output_dir:
-            file_path = os.path.join(self._output_dir, "coco_instances_results.json")
-            self._logger.info("Saving results to {}".format(file_path))
-            with PathManager.open(file_path, "w") as f:
-                f.write(json.dumps(coco_results))
-                f.flush()
+#         if not self._do_evaluation:
+#             self._logger.info("Annotations are not available for evaluation.")
+#             return
 
-        if not self._do_evaluation:
-            self._logger.info("Annotations are not available for evaluation.")
-            return
+#         self._logger.info(
+#             "Evaluating predictions with {} COCO API...".format(
+#                 "unofficial" if self._use_fast_impl else "official"
+#             )
+#         )
+#         for task in sorted(tasks):
+#             assert task in {"bbox", "segm", "keypoints"}, f"Got unknown task: {task}!"
+#             coco_eval = (
+#                 _evaluate_predictions_on_coco(
+#                     self._coco_api,
+#                     coco_results,
+#                     task,
+#                     kpt_oks_sigmas=self._kpt_oks_sigmas,
+#                     use_fast_impl=self._use_fast_impl,
+#                     img_ids=img_ids,
+#                 )
+#                 if len(coco_results) > 0
+#                 else None  # cocoapi does not handle empty results very well
+#             )
 
-        self._logger.info(
-            "Evaluating predictions with {} COCO API...".format(
-                "unofficial" if self._use_fast_impl else "official"
-            )
-        )
-        for task in sorted(tasks):
-            assert task in {"bbox", "segm", "keypoints"}, f"Got unknown task: {task}!"
-            coco_eval = (
-                _evaluate_predictions_on_coco(
-                    self._coco_api,
-                    coco_results,
-                    task,
-                    kpt_oks_sigmas=self._kpt_oks_sigmas,
-                    use_fast_impl=self._use_fast_impl,
-                    img_ids=img_ids,
-                )
-                if len(coco_results) > 0
-                else None  # cocoapi does not handle empty results very well
-            )
+#             res = self._derive_coco_results(
+#                 coco_eval, task, class_names=self._metadata.get("thing_classes")
+#             )
+#             self._results[task] = res
 
-            res = self._derive_coco_results(
-                coco_eval, task, class_names=self._metadata.get("thing_classes")
-            )
-            self._results[task] = res
+#     # def _eval_box_proposals(self, predictions):
+#     #     """
+#     #     Evaluate the box proposals in predictions.
+#     #     Fill self._results with the metrics for "box_proposals" task.
+#     #     """
+#     #     if self._output_dir:
+#     #         # Saving generated box proposals to file.
+#     #         # Predicted box_proposals are in XYXY_ABS mode.
+#     #         bbox_mode = BoxMode.XYXY_ABS.value
+#     #         ids, boxes, objectness_logits = [], [], []
+#     #         for prediction in predictions:
+#     #             ids.append(prediction["image_id"])
+#     #             boxes.append(prediction["proposals"].proposal_boxes.tensor.numpy())
+#     #             objectness_logits.append(prediction["proposals"].objectness_logits.numpy())
 
-    def _eval_box_proposals(self, predictions):
-        """
-        Evaluate the box proposals in predictions.
-        Fill self._results with the metrics for "box_proposals" task.
-        """
-        if self._output_dir:
-            # Saving generated box proposals to file.
-            # Predicted box_proposals are in XYXY_ABS mode.
-            bbox_mode = BoxMode.XYXY_ABS.value
-            ids, boxes, objectness_logits = [], [], []
-            for prediction in predictions:
-                ids.append(prediction["image_id"])
-                boxes.append(prediction["proposals"].proposal_boxes.tensor.numpy())
-                objectness_logits.append(prediction["proposals"].objectness_logits.numpy())
+#     #         proposal_data = {
+#     #             "boxes": boxes,
+#     #             "objectness_logits": objectness_logits,
+#     #             "ids": ids,
+#     #             "bbox_mode": bbox_mode,
+#     #         }
+#     #         with PathManager.open(os.path.join(self._output_dir, "box_proposals.pkl"), "wb") as f:
+#     #             pickle.dump(proposal_data, f)
 
-            proposal_data = {
-                "boxes": boxes,
-                "objectness_logits": objectness_logits,
-                "ids": ids,
-                "bbox_mode": bbox_mode,
-            }
-            with PathManager.open(os.path.join(self._output_dir, "box_proposals.pkl"), "wb") as f:
-                pickle.dump(proposal_data, f)
+#     #     if not self._do_evaluation:
+#     #         self._logger.info("Annotations are not available for evaluation.")
+#     #         return
 
-        if not self._do_evaluation:
-            self._logger.info("Annotations are not available for evaluation.")
-            return
+#     #     self._logger.info("Evaluating bbox proposals ...")
+#     #     res = {}
+#     #     areas = {"all": "", "small": "s", "medium": "m", "large": "l"}
+#     #     for limit in [100, 1000]:
+#     #         for area, suffix in areas.items():
+#     #             stats = _evaluate_box_proposals(predictions, self._coco_api, area=area, limit=limit)
+#     #             key = "AR{}@{:d}".format(suffix, limit)
+#     #             res[key] = float(stats["ar"].item() * 100)
+#     #     self._logger.info("Proposal metrics: \n" + create_small_table(res))
+#     #     self._results["box_proposals"] = res
 
-        self._logger.info("Evaluating bbox proposals ...")
-        res = {}
-        areas = {"all": "", "small": "s", "medium": "m", "large": "l"}
-        for limit in [100, 1000]:
-            for area, suffix in areas.items():
-                stats = _evaluate_box_proposals(predictions, self._coco_api, area=area, limit=limit)
-                key = "AR{}@{:d}".format(suffix, limit)
-                res[key] = float(stats["ar"].item() * 100)
-        self._logger.info("Proposal metrics: \n" + create_small_table(res))
-        self._results["box_proposals"] = res
+#     def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+#         """
+#         Derive the desired score numbers from summarized COCOeval.
 
-    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
-        """
-        Derive the desired score numbers from summarized COCOeval.
+#         Args:
+#             coco_eval (None or COCOEval): None represents no predictions from model.
+#             iou_type (str):
+#             class_names (None or list[str]): if provided, will use it to predict
+#                 per-category AP.
 
-        Args:
-            coco_eval (None or COCOEval): None represents no predictions from model.
-            iou_type (str):
-            class_names (None or list[str]): if provided, will use it to predict
-                per-category AP.
+#         Returns:
+#             a dict of {metric name: score}
+#         """
 
-        Returns:
-            a dict of {metric name: score}
-        """
+#         metrics = {
+#             "bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+#             "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+#             "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
+#         }[iou_type]
 
-        metrics = {
-            "bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
-            "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
-            "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
-        }[iou_type]
+#         if coco_eval is None:
+#             self._logger.warn("No predictions from the model!")
+#             return {metric: float("nan") for metric in metrics}
 
-        if coco_eval is None:
-            self._logger.warn("No predictions from the model!")
-            return {metric: float("nan") for metric in metrics}
+#         # the standard metrics
+#         results = {
+#             metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
+#             for idx, metric in enumerate(metrics)
+#         }
+#         self._logger.info(
+#             "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
+#         )
+#         if not np.isfinite(sum(results.values())):
+#             self._logger.info("Some metrics cannot be computed and is shown as NaN.")
 
-        # the standard metrics
-        results = {
-            metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
-            for idx, metric in enumerate(metrics)
-        }
-        self._logger.info(
-            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
-        )
-        if not np.isfinite(sum(results.values())):
-            self._logger.info("Some metrics cannot be computed and is shown as NaN.")
+#         if class_names is None or len(class_names) <= 1:
+#             return results
+#         # Compute per-category AP
+#         # from https://github.com/facebookresearch/Detectron/blob/a6a835f5b8208c45d0dce217ce9bbda915f44df7/detectron/datasets/json_dataset_evaluator.py#L222-L252 # noqa
+#         precisions = coco_eval.eval["precision"]
+#         # precision has dims (iou, recall, cls, area range, max dets)
+#         assert len(class_names) == precisions.shape[2]
 
-        if class_names is None or len(class_names) <= 1:
-            return results
-        # Compute per-category AP
-        # from https://github.com/facebookresearch/Detectron/blob/a6a835f5b8208c45d0dce217ce9bbda915f44df7/detectron/datasets/json_dataset_evaluator.py#L222-L252 # noqa
-        precisions = coco_eval.eval["precision"]
-        # precision has dims (iou, recall, cls, area range, max dets)
-        assert len(class_names) == precisions.shape[2]
+#         results_per_category = []
+#         for idx, name in enumerate(class_names):
+#             # area range index 0: all area ranges
+#             # max dets index -1: typically 100 per image
+#             precision = precisions[:, :, idx, 0, -1]
+#             precision = precision[precision > -1]
+#             ap = np.mean(precision) if precision.size else float("nan")
+#             results_per_category.append(("{}".format(name), float(ap * 100)))
 
-        results_per_category = []
-        for idx, name in enumerate(class_names):
-            # area range index 0: all area ranges
-            # max dets index -1: typically 100 per image
-            precision = precisions[:, :, idx, 0, -1]
-            precision = precision[precision > -1]
-            ap = np.mean(precision) if precision.size else float("nan")
-            results_per_category.append(("{}".format(name), float(ap * 100)))
+#         # tabulate it
+#         N_COLS = min(6, len(results_per_category) * 2)
+#         results_flatten = list(itertools.chain(*results_per_category))
+#         results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+#         table = tabulate(
+#             results_2d,
+#             tablefmt="pipe",
+#             floatfmt=".3f",
+#             headers=["category", "AP"] * (N_COLS // 2),
+#             numalign="left",
+#         )
+#         self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
 
-        # tabulate it
-        N_COLS = min(6, len(results_per_category) * 2)
-        results_flatten = list(itertools.chain(*results_per_category))
-        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
-        table = tabulate(
-            results_2d,
-            tablefmt="pipe",
-            floatfmt=".3f",
-            headers=["category", "AP"] * (N_COLS // 2),
-            numalign="left",
-        )
-        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
-
-        results.update({"AP-" + name: ap for name, ap in results_per_category})
-        return results
+#         results.update({"AP-" + name: ap for name, ap in results_per_category})
+#         return results
 
 
 def instances_to_coco_json(instances, img_id):
@@ -577,3 +599,708 @@ def _evaluate_predictions_on_coco(
     coco_eval.summarize()
 
     return coco_eval
+
+
+class COCOEvaluator(DatasetEvaluator):
+    """
+    Evaluate object proposal, instance detection/segmentation, keypoint detection
+    outputs using COCO's metrics and APIs.
+    """
+
+    def __init__(self, dataset_name, cfg, distributed, output_dir=None):
+        """
+        Args:
+            dataset_name (str): name of the dataset to be evaluated.
+                It must have either the following corresponding metadata:
+
+                    "json_file": the path to the COCO format annotation
+
+                Or it must be in detectron2's standard dataset format
+                so it can be converted to COCO format automatically.
+            cfg (CfgNode): config instance
+            distributed (True): if True, will collect results from all ranks and run evaluation
+                in the main process.
+                Otherwise, will evaluate the results in the current process.
+            output_dir (str): optional, an output directory to dump all
+                results predicted on the dataset. The dump contains two files:
+
+                1. "instance_predictions.pth" a file in torch serialization
+                   format that contains all the raw original predictions.
+                2. "coco_instances_results.json" a json file in COCO's result
+                   format.
+        """
+        self._tasks = self._tasks_from_config(cfg)
+        self._distributed = distributed
+        self._output_dir = output_dir
+
+        self._cpu_device = torch.device("cpu")
+        self._logger = logging.getLogger(__name__)
+
+        self._metadata = MetadataCatalog.get(dataset_name)
+        if not hasattr(self._metadata, "json_file"):
+            self._logger.warning(
+                f"json_file was not found in MetaDataCatalog for '{dataset_name}'."
+                " Trying to convert it to COCO format ..."
+            )
+
+            cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
+            self._metadata.json_file = cache_path
+            convert_to_coco_json(dataset_name, cache_path)
+
+        json_file = PathManager.get_local_path(self._metadata.json_file)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self._coco_api = COCO(json_file)
+
+        self._kpt_oks_sigmas = cfg.TEST.KEYPOINT_OKS_SIGMAS
+        # Test set json files do not contain annotations (evaluation must be
+        # performed using the COCO evaluation server).
+        self._do_evaluation = "annotations" in self._coco_api.dataset
+
+    def reset(self):
+        self._predictions = []
+
+    def _tasks_from_config(self, cfg):
+        """
+        Returns:
+            tuple[str]: tasks that can be evaluated under the given configuration.
+        """
+        tasks = ("bbox",)
+        if cfg.MODEL.MASK_ON:
+            tasks = tasks + ("segm",)
+        if cfg.MODEL.KEYPOINT_ON:
+            tasks = tasks + ("keypoints",)
+        return tasks
+
+    def process(self, inputs, outputs):
+        """
+        Args:
+            inputs: the inputs to a COCO model (e.g., GeneralizedRCNN).
+                It is a list of dict. Each dict corresponds to an image and
+                contains keys like "height", "width", "file_name", "image_id".
+            outputs: the outputs of a COCO model. It is a list of dicts with key
+                "instances" that contains :class:`Instances`.
+        """
+        for input, output in zip(inputs, outputs):
+            prediction = {"image_id": input["image_id"]}
+
+            # TODO this is ugly
+            if "instances" in output:
+                instances = output["instances"].to(self._cpu_device)
+                prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
+            if "proposals" in output:
+                prediction["proposals"] = output["proposals"].to(self._cpu_device)
+            self._predictions.append(prediction)
+
+    def evaluate(self):
+        if self._distributed:
+            comm.synchronize()
+            predictions = comm.gather(self._predictions, dst=0)
+            predictions = list(itertools.chain(*predictions))
+
+            if not comm.is_main_process():
+                return {}
+        else:
+            predictions = self._predictions
+
+        if len(predictions) == 0:
+            self._logger.warning("[COCOEvaluator] Did not receive valid predictions.")
+            return {}
+
+        if self._output_dir:
+            PathManager.mkdirs(self._output_dir)
+            file_path = os.path.join(self._output_dir, "instances_predictions.pth")
+            with PathManager.open(file_path, "wb") as f:
+                torch.save(predictions, f)
+
+        self._results = OrderedDict()
+        if "proposals" in predictions[0]:
+            self._eval_box_proposals(predictions)
+        if "instances" in predictions[0]:
+            self._eval_predictions(set(self._tasks), predictions)
+        # Copy so the caller can do whatever with results
+        return copy.deepcopy(self._results)
+
+    def _eval_predictions(self, tasks, predictions):
+        """
+        Evaluate predictions on the given tasks.
+        Fill self._results with the metrics of the tasks.
+        """
+        self._logger.info("Preparing results for COCO format ...")
+        coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
+
+        # unmap the category ids for COCO
+        if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
+            reverse_id_mapping = {
+                v: k for k, v in self._metadata.thing_dataset_id_to_contiguous_id.items()
+            }
+            for result in coco_results:
+                category_id = result["category_id"]
+                assert (
+                    category_id in reverse_id_mapping
+                ), "A prediction has category_id={}, which is not available in the dataset.".format(
+                    category_id
+                )
+                result["category_id"] = reverse_id_mapping[category_id]
+
+        if self._output_dir:
+            file_path = os.path.join(self._output_dir, "coco_instances_results.json")
+            self._logger.info("Saving results to {}".format(file_path))
+            with PathManager.open(file_path, "w") as f:
+                f.write(json.dumps(coco_results))
+                f.flush()
+
+        if not self._do_evaluation:
+            self._logger.info("Annotations are not available for evaluation.")
+            return
+
+        self._logger.info("Evaluating predictions ...")
+        for task in sorted(tasks):
+            coco_eval = (
+                _evaluate_predictions_on_coco(
+                    self._coco_api, coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
+                )
+                if len(coco_results) > 0
+                else None  # cocoapi does not handle empty results very well
+            )
+
+            res = self._derive_coco_results(
+                coco_eval, task, class_names=self._metadata.get("thing_classes")
+            )
+            self._results[task] = res
+
+    def _eval_box_proposals(self, predictions):
+        """
+        Evaluate the box proposals in predictions.
+        Fill self._results with the metrics for "box_proposals" task.
+        """
+        if self._output_dir:
+            # Saving generated box proposals to file.
+            # Predicted box_proposals are in XYXY_ABS mode.
+            bbox_mode = BoxMode.XYXY_ABS.value
+            ids, boxes, objectness_logits = [], [], []
+            for prediction in predictions:
+                ids.append(prediction["image_id"])
+                boxes.append(prediction["proposals"].proposal_boxes.tensor.numpy())
+                objectness_logits.append(prediction["proposals"].objectness_logits.numpy())
+
+            proposal_data = {
+                "boxes": boxes,
+                "objectness_logits": objectness_logits,
+                "ids": ids,
+                "bbox_mode": bbox_mode,
+            }
+            with PathManager.open(os.path.join(self._output_dir, "box_proposals.pkl"), "wb") as f:
+                pickle.dump(proposal_data, f)
+
+        if not self._do_evaluation:
+            self._logger.info("Annotations are not available for evaluation.")
+            return
+
+        self._logger.info("Evaluating bbox proposals ...")
+        res = {}
+        areas = {"all": "", "small": "s", "medium": "m", "large": "l"}
+        for limit in [100, 1000]:
+            for area, suffix in areas.items():
+                stats = _evaluate_box_proposals(predictions, self._coco_api, area=area, limit=limit)
+                key = "AR{}@{:d}".format(suffix, limit)
+                res[key] = float(stats["ar"].item() * 100)
+        self._logger.info("Proposal metrics: \n" + create_small_table(res))
+        self._results["box_proposals"] = res
+
+    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+        """
+        Derive the desired score numbers from summarized COCOeval.
+
+        Args:
+            coco_eval (None or COCOEval): None represents no predictions from model.
+            iou_type (str):
+            class_names (None or list[str]): if provided, will use it to predict
+                per-category AP.
+
+        Returns:
+            a dict of {metric name: score}
+        """
+
+        metrics = {
+            "bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+            "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+            "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
+        }[iou_type]
+
+        if coco_eval is None:
+            self._logger.warn("No predictions from the model!")
+            return {metric: float("nan") for metric in metrics}
+
+        # the standard metrics
+        results = {
+            metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
+            for idx, metric in enumerate(metrics)
+        }
+        self._logger.info(
+            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
+        )
+        if not np.isfinite(sum(results.values())):
+            self._logger.info("Note that some metrics cannot be computed.")
+
+        if class_names is None or len(class_names) <= 1:
+            return results
+        # Compute per-category AP
+        # from https://github.com/facebookresearch/Detectron/blob/a6a835f5b8208c45d0dce217ce9bbda915f44df7/detectron/datasets/json_dataset_evaluator.py#L222-L252 # noqa
+        precisions = coco_eval.eval["precision"]
+        # precision has dims (iou, recall, cls, area range, max dets)
+        assert len(class_names) == precisions.shape[2]
+
+        results_per_category = []
+        for idx, name in enumerate(class_names):
+            # area range index 0: all area ranges
+            # max dets index -1: typically 100 per image
+            # [modified by SIA] IoU 0.5: typically used in Remote Sensing
+            precision = precisions[0, :, idx, 0, -1]
+            precision = precision[precision > -1]
+            ap = np.mean(precision) if precision.size else float("nan")
+            results_per_category.append(("{}".format(name), float(ap * 100)))
+
+        # tabulate it
+        N_COLS = min(6, len(results_per_category) * 2)
+        results_flatten = list(itertools.chain(*results_per_category))
+        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+        table = tabulate(
+            results_2d,
+            tablefmt="pipe",
+            floatfmt=".3f",
+            headers=["category", "AP"] * (N_COLS // 2),
+            numalign="left",
+        )
+        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
+
+        # [modified by SIA] IoU 0.5: typically used in Remote Sensing
+        results.update({"AP@0.5-" + name: ap for name, ap in results_per_category})
+        return results
+
+
+class COCOEvaluatorExtend(COCOEvaluator):
+    """
+    Evaluate object proposal, instance detection/segmentation, keypoint detection
+    outputs using COCO's metrics and APIs.
+    """
+
+    def __init__(
+        self,
+        dataset_name,
+        cfg,
+        distributed=True,
+        output_dir="/data/workspace/hyobin/detectron2/mysolver/output",
+        is_scene=True,
+        is_vis=False,
+        is_vis_sample=False,
+        is_vis_scene=False,
+        vis_spec_cls_id=-1,
+        is_set_gt_size=False,
+        iteration=20,
+    ):
+        """
+        Args:
+            dataset_name (str): name of the dataset to be evaluated.
+                It must have either the following corresponding metadata:
+
+                    "json_file": the path to the COCO format annotation
+
+                Or it must be in detectron2's standard dataset format
+                so it can be converted to COCO format automatically.
+            cfg (CfgNode): config instance
+            distributed (True): if True, will collect results from all ranks for evaluation.
+                Otherwise, will evaluate the results in the current process.
+            output_dir (str): optional, an output directory to dump all
+                results predicted on the dataset. The dump contains two files:
+
+                1. "instance_predictions.pth" a file in torch serialization
+                   format that contains all the raw original predictions.
+                2. "coco_instances_results.json" a json file in COCO's result
+                   format.
+        """
+        #assert not is_scene or cfg.DATASETS.IS_RBOX, "Scene evaluation is supported only RBox"
+
+        #self.is_rbox = cfg.DATASETS.IS_RBOX
+        self.is_rbox = False
+        self.is_cat_agnostic = False  # cfg.MODEL.RPOINTRCNN.ONLY_RPN
+        self.scene_nms_thresh = 0.7
+        self.is_scene = is_scene
+        self.is_vis = is_vis
+        self.is_vis_sample = is_vis_sample
+        self.is_vis_scene = is_vis_scene
+        self.vis_spec_cls_id = vis_spec_cls_id
+        self.is_set_gt_size = is_set_gt_size
+        self.dataset_name = dataset_name
+
+        # Initialize COCOEvaluator and create geococo_api if use rbox
+        self._tasks = ["rbbox"] if self.is_rbox else ["bbox"]
+        self._distributed = distributed
+        self._output_dir = output_dir
+        self._vis_sample_num = 10
+
+        self._cpu_device = torch.device("cpu")
+        self._logger = logging.getLogger(__name__)
+
+        # if self.is_rbox:
+        #     from pygeococotools.geococo import GeoCOCO
+        #     json_file = PathManager.get_local_path(self._metadata.json_file)
+        #     self._coco_api = GeoCOCO(json_file, is_scene=is_scene)
+        # else:
+        #     cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
+        #     if not os.path.exists(cache_path):
+        #         convert_to_coco_json(dataset_name, cache_path)
+        #     self._coco_api = COCO(cache_path)
+
+        self._kpt_oks_sigmas = cfg.TEST.KEYPOINT_OKS_SIGMAS
+        # Test set json files do not contain annotations (evaluation must be
+        # performed using the COCO evaluation server).
+        self._iter = iteration
+
+        self.__metadata = None
+        self.__coco_api = None
+        self.__vis_sample_count = None
+
+    @property
+    def _metadata(self):
+        if self.__metadata is None:
+            self.__metadata = MetadataCatalog.get(self.dataset_name)
+        return self.__metadata
+
+    @property
+    def _coco_api(self):
+        if self.__coco_api is None:
+            with contextlib.redirect_stdout(io.StringIO()):
+                from pygeococotools.geococo import GeoCOCO
+
+                self.__coco_api = GeoCOCO(
+                    PathManager.get_local_path(self._metadata.json_file), is_scene=self.is_scene
+                )
+        return self.__coco_api
+
+    @property
+    def _vis_sample_count(self):
+        if self.__vis_sample_count is None:
+            self.__vis_sample_count = [0] * len(self._metadata.get("thing_classes"))
+        return self.__vis_sample_count
+
+    def process(self, inputs, outputs):
+        """
+        Args:
+            inputs: the inputs to a COCO model (e.g., GeneralizedRCNN).
+                It is a list of dict. Each dict corresponds to an image and
+                contains keys like "height", "width", "file_name", "image_id".
+            outputs: the outputs of a COCO model. It is a list of dicts with key
+                "instances" that contains :class:`Instances`.
+        """
+        for input, output in zip(inputs, outputs):
+            prediction = {
+                "image_id": input["image_id"],
+                "scene_id": input["scene_id"],
+                "scene_bounds_imcoords": input["scene_bounds_imcoords"],
+            }
+            instances = output["instances"].to(self._cpu_device)
+
+            if self.is_set_gt_size:
+                self._set_preds_to_gt_sizes_(instances)
+
+            if self.is_vis:
+                self._visualize_and_save(input, instances, output)
+
+            prediction["instances"] = self._instances_to_coco_json(instances, input)
+            self._predictions.append(prediction)
+
+    def _instances_to_coco_json(self, instances, input):
+        """
+        Dump an "Instances" object to a COCO-format json that's used for evaluation.
+
+        Args:
+            instances (Instances):
+            input (dict): input ddata
+
+        Returns:
+            list[dict]: list of json annotations in COCO format.
+        """
+
+        num_instance = len(instances)
+        if num_instance == 0:
+            return list()
+
+        boxes = instances.pred_boxes.tensor.numpy()
+
+        if not self.is_rbox:
+            boxes = BoxMode.convert(boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+
+        boxes = boxes.tolist()
+        scores = instances.scores.tolist()
+        classes = instances.pred_classes.tolist()
+
+        results = list()
+
+        image_id = input["scene_id"] if self.is_scene else input["image_id"]
+        scene_bounds_imcoords = input["scene_bounds_imcoords"] if self.is_scene else [0, 0]
+
+        id_name = "scene_id" if self.is_scene else "patch_id"
+        if self.is_rbox:
+            for k in range(num_instance):
+                rbox = boxes[k]
+                rbox[0] += scene_bounds_imcoords[0]  # x
+                rbox[1] += scene_bounds_imcoords[1]  # y
+
+                result = {
+                    id_name: image_id,
+                    "category_id": classes[k],
+                    "rbbox": convert_angle_to_geococo_format(rbox),
+                    "score": scores[k],
+                }
+                results.append(result)
+        else:
+            for k in range(num_instance):
+                bbox = boxes[k]
+                bbox[0] += scene_bounds_imcoords[0]
+                bbox[1] += scene_bounds_imcoords[1]
+                bbox[2] += scene_bounds_imcoords[0]
+                bbox[3] += scene_bounds_imcoords[1]
+
+                result = {
+                    id_name: image_id,
+                    "category_id": classes[k],
+                    "bbox": boxes[k],
+                    "score": scores[k],
+                }
+                results.append(result)
+
+        return results
+
+    def _eval_predictions(self, tasks, predictions):
+        """
+        Evaluate self._predictions on the given tasks.
+        Fill self._results with the metrics of the tasks.
+        """
+        self._logger.info("Preparing results for COCO format ...")
+        self._coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
+
+        if self.is_scene:
+            self._coco_results = self._nms_scene()
+
+            # if self.is_vis_scene:
+            #     self._visualize_and_save_scenes()
+
+                # unmap the category ids for COCO
+        if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
+            reverse_id_mapping = {
+                v: k for k, v in self._metadata.thing_dataset_id_to_contiguous_id.items()
+            }
+            for result in self._coco_results:
+                category_id = result["category_id"]
+                assert (
+                    category_id in reverse_id_mapping
+                ), "A prediction has category_id={}, which is not available in the dataset.".format(
+                    category_id
+                )
+                result["category_id"] = reverse_id_mapping[category_id]
+
+        if self._output_dir:
+            file_path = os.path.join(self._output_dir, "coco_instances_results.json")
+            self._logger.info("Saving results to {}".format(file_path))
+            with PathManager.open(file_path, "w") as f:
+                f.write(json.dumps(self._coco_results))
+                f.flush()
+
+        # if not self._do_evaluation:
+        if not self._coco_api.dataset["annotations"]:
+            self._logger.info("Annotations are not available for evaluation.")
+            return
+
+        self._logger.info("Evaluating predictions ...")
+        for task in sorted(tasks):
+            coco_eval = (
+                self._evaluate_predictions_on_coco(self._coco_api, self._coco_results, task)
+                if len(self._coco_results) > 0
+                else None  # cocoapi does not handle empty results very well
+            )
+
+            _task = "bbox" if task == "rbbox" else task
+            class_names = self._metadata.get("thing_classes") if not self.is_cat_agnostic else None
+            res = self._derive_coco_results(coco_eval, _task, class_names=class_names)
+            self._save_predictions_on_tensorboard(res)
+            self._results[task] = res
+
+    def _save_predictions_on_tensorboard(self, res):
+        with EventStorage():
+            storage = get_event_storage()
+            storage._iter = self._iter
+            storage.put_scalars(**res)
+            writer = TensorboardXWriter(log_dir=self._output_dir)
+            writer.write()
+
+    def _evaluate_predictions_on_coco(self, coco_gt, coco_results, iou_type):
+        """
+        Evaluate the coco results using COCOEval API.
+        """
+        assert len(coco_results) > 0
+
+        coco_dt = coco_gt.loadRes(coco_results)
+
+        from pygeococotools.geococoeval import GeoCOCOeval
+
+        coco_eval = GeoCOCOeval(coco_gt, coco_dt, iou_type, self.is_scene)
+        # if self.is_rbox:
+        #     from pygeococotools.geococoeval import GeoCOCOeval
+        #     coco_eval = GeoCOCOeval(coco_gt, coco_dt, iou_type, self.is_scene)
+        # else:
+        #     coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+
+        if self.is_cat_agnostic:
+            coco_eval.params.useCats = 0
+
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+
+        return coco_eval
+
+    def _set_preds_to_gt_sizes_(self, instances):
+        assert not self.is_rbox, "Not supported RBox Mode yet."
+
+        cls_ids = self._coco_api.getCatIds()
+        pred_boxes = instances.pred_boxes.tensor
+        pred_classes = instances.pred_classes
+        ground_truths = self._get_ground_truth(input["image_id"])
+        gt_boxes = ground_truths["bboxes"]
+        gt_classes = ground_truths["classes"]
+
+        for cls_id in cls_ids:
+            pred_boxes_per_cls = pred_boxes[pred_classes == cls_id]
+            gt_boxes_per_cls = gt_boxes[gt_classes == cls_id]
+            pred_center_per_cls = (pred_boxes_per_cls[:, :2] + pred_boxes_per_cls[:, 2:]) / 2
+            gt_center_per_cls = (gt_boxes_per_cls[:, :2] + gt_boxes_per_cls[:, 2:]) / 2
+
+            if len(pred_center_per_cls) > 0 and len(gt_center_per_cls) > 0:
+                min_dist_indices = pairwise_distances_argmin(pred_center_per_cls, gt_center_per_cls)
+                gt_boxes_per_pred = gt_boxes_per_cls[min_dist_indices]
+                gt_size_per_pred = (gt_boxes_per_pred[:, 2:] - gt_boxes_per_pred[:, :2]) / 2
+
+                pred_boxes_per_cls = cat(
+                    [
+                        pred_center_per_cls - gt_size_per_pred,
+                        pred_center_per_cls + gt_size_per_pred,
+                    ],
+                    dim=-1,
+                )
+                pred_boxes[pred_classes == cls_id] = pred_boxes_per_cls
+
+        instances.pred_boxes = Boxes(pred_boxes)
+
+    def _get_ground_truth(self, image_id):
+        ground_truths = dict()
+
+        annos = self._coco_api.loadAnns(self._coco_api.getAnnIds([image_id]))
+        if self.is_rbox:
+            ground_truths["rboxes"] = np.asarray(
+                [convert_angle_to_det2_format(ann["properties"]["rbbox"]) for ann in annos]
+            )
+            ground_truths["classes"] = np.asarray(
+                [ann["properties"]["category_id"] for ann in annos]
+            )
+        else:
+            ground_truths["bboxes"] = np.asarray(
+                [
+                    BoxMode.convert(ann["properties"]["bbox"], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+                    for ann in annos
+                ]
+            )
+            ground_truths["classes"] = np.asarray(
+                [ann["properties"]["category_id"] for ann in annos]
+            )
+
+        return ground_truths
+
+    def _visualize_and_save(self, input_data, instances, output):
+        image = input_data["image"].detach().cpu().numpy()
+        image = np.moveaxis(image, 0, -1)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.resize(image, (input_data["width"], input_data["height"]))
+
+        ground_truths = self._get_ground_truth(input_data["image_id"])
+
+        is_vis = False
+        if self.is_vis_sample:
+            counts = [0] * len(self._metadata.get("thing_classes"))
+            for cls_idx in ground_truths["classes"]:
+                counts[cls_idx - 1] += 1
+            for idx in range(len(self._vis_sample_count)):
+                if counts[idx] > 0 and self._vis_sample_count[idx] < self._vis_sample_num:
+                    self._vis_sample_count[idx] += 1
+                    is_vis = True
+        if self.vis_spec_cls_id != -1:
+            for cls_idx in ground_truths["classes"]:
+                if self.vis_spec_cls_id == cls_idx:
+                    is_vis = True
+                    break
+
+        if (self.vis_spec_cls_id == -1 and not self.is_vis_sample) or is_vis:
+            visualizer = RPointVisualizer(image, metadata=self._metadata)
+            #visualizer = Visualizer(image, metadata=self._metadata)
+            vis_output = visualizer.draw_instance_predictions(
+                instances, ground_truths=ground_truths
+            )
+            vis_output.save(os.path.join(self._output_dir, str(input_data["image_id"]) + ".png"))
+
+    # def _visualize_and_save_scenes(self):
+    #     coco_results_dict = defaultdict(list)
+    #     for result in self._coco_results:
+    #         coco_results_dict[result["scene_id"]].append(result)
+
+    #     scene_root = self._metadata.scene_path
+    #     for scene_id, objects in coco_results_dict.items():
+    #         image_path = os.path.join(scene_root, self._coco_api.sceneToPath[scene_id])
+    #         image = detection_utils.read_image(image_path, format="RGB")
+
+    #         rboxes = np.array(
+    #             [convert_angle_to_det2_format(instance["rbbox"]) for instance in objects]
+    #         )
+    #         classes = np.array([instance["category_id"] for instance in objects], dtype=np.int64)
+    #         scores = np.array([instance["score"] for instance in objects])
+
+    #         predictions = Instances(image_size=[image.shape[1], image.shape[0]])
+    #         predictions.pred_boxes = rboxes
+    #         predictions.pred_classes = classes
+    #         predictions.scores = scores
+
+    #         ground_truths = self._get_ground_truth(scene_id)                  
+    #         visualizer = RPointVisualizer(image, metadata=self._metadata)
+    #         #visualizer = Visualizer(image, metadata=self._metadata)
+    #         vis_output = visualizer.draw_instance_predictions(
+    #             predictions, ground_truths=ground_truths
+    #         )
+    #         image_name = os.path.splitext(os.path.basename(image_path))[0]
+    #         vis_output.save(os.path.join(self._output_dir, image_name + ".png"))
+
+    @torch.no_grad()
+    def _nms_scene(self):
+        coco_results = list()
+        coco_results_dict = defaultdict(list)
+        for result in self._coco_results:
+            coco_results_dict[result["scene_id"]].append(result)
+
+        for image_id, objects in tqdm(coco_results_dict.items()):
+            scores = torch.Tensor([instance["score"] for instance in objects]).cuda()
+            classes = torch.Tensor([instance["category_id"] for instance in objects]).cuda()
+
+            if self.is_rbox:
+                boxes = torch.Tensor([instance["rbbox"] for instance in objects]).cuda()
+                keep = batched_nms_rotated(boxes, scores, classes, self.scene_nms_thresh)
+            else:
+                boxes = torch.Tensor([instance["bbox"] for instance in objects]).cuda()
+                keep = batched_nms(boxes, scores, classes, self.scene_nms_thresh)
+
+            boxes = boxes[keep].detach().cpu().numpy().tolist()
+            scores = scores[keep].detach().cpu().numpy().tolist()
+            classes = classes[keep].detach().cpu().numpy().tolist()
+
+            for box, score, cls in zip(boxes, scores, classes):
+                coco_results.append(
+                    {"scene_id": image_id, "bbox": box, "score": score, "category_id": cls}
+                )
+
+        return coco_results

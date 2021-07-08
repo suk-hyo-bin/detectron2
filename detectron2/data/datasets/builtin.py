@@ -16,7 +16,7 @@ exist in "./datasets/".
 Users SHOULD NOT use this file to create new dataset / metadata for new dataset.
 To add new dataset, refer to the tutorial "docs/DATASETS.md".
 """
-
+import pdb
 import os
 import pdb
 
@@ -262,37 +262,56 @@ from .geococo import load_geococo_dicts
 ROOT_PATH = "/data/datasets/yet_another_DOTAv2/GeoCOCO/"
 
 DOTA_SPLITS = {
-    "dota_train": (
+    "dotatrain": (
         "Train/",
         "Train/GeoCOCO.json",
         "",
     ),
-    "dota_val":(
+    "dotaval": (
         "Val/",
         "Val/GeoCOCO.json",
         "",
     ),
 }
 
-CATEGORIES = {
-    "airplane": [
-        {"color": [0, 255, 0], "id": 0, "name": "airplane"},
-    ],
-    "oil-tanker": [
-        {"color": [0, 255, 0], "id": 0, "name": "oil-tanker"},
-    ],
-    "special-ship": [
-        {"color": [0, 255, 0], "id": 0, "name": "special-ship"},
-    ],
-    "train": [
-        {"color": [0, 255, 0], "id": 0, "name": "train"},
-    ],
-    "car": [
-        {"color": [0, 255, 0], "id": 0, "name": "car"},
-    ],
-}
+CATEGORIES = [
+    {"color": [206, 186, 171], "id": 0, "name": "plane"},
+    {"color": [220, 20, 60], "id": 1, "name": "baseball-diamond"},
+    {"color": [119, 11, 32], "id": 2, "name": "bridge"},
+    {"color": [0, 0, 142], "id": 3, "name": "ground-track-field"},
+    {"color": [0, 0, 230], "id": 4, "name": "small-vehicle"},
+    {"color": [106, 0, 228], "id": 5, "name": "large-vehicle"},
+    {"color": [0, 60, 100], "id": 6, "name": "ship"},
+    {"color": [0, 80, 100], "id": 7, "name": "tennis-court"},
+    {"color": [0, 0, 70], "id": 8, "name": "basketball-court"},
+    {"color": [0, 0, 192], "id": 9, "name": "storage-tank"},
+    {"color": [250, 170, 30], "id": 10, "name": "soccer-ball-field"},
+    {"color": [100, 170, 30], "id": 11, "name": "roundabout"},
+    {"color": [220, 220, 0], "id": 12, "name": "harbor"},
+    {"color": [175, 116, 175], "id": 13, "name": "swimming-pool"},
+    {"color": [250, 0, 30], "id": 14, "name": "helicopter"},
+    {"color": [165, 42, 42], "id": 15, "name": "container-crane"},
+    {"color": [255, 77, 255], "id": 16, "name": "airport"},
+    {"color": [0, 226, 252], "id": 17, "name": "helipad"},
 
+    # "airplane": [
+    #     {"color": [0, 255, 0], "id": 0, "name": "airplane"},
+    # ],
+    # "oil-tanker": [
+    #     {"color": [0, 255, 0], "id": 0, "name": "oil-tanker"},
+    # ],
+    # "special-ship": [
+    #     {"color": [0, 255, 0], "id": 0, "name": "special-ship"},
+    # ],
+    # "train": [
+    #     {"color": [0, 255, 0], "id": 0, "name": "train"},
+    # ],
+    # "car": [
+    #     {"color": [0, 255, 0], "id": 0, "name": "car"},
+    # ],
+]
 
+#pdb.set_trace()
 for dataset_name, (image_path, json_path, scene_path) in DOTA_SPLITS.items():
     json_path = os.path.join(ROOT_PATH, json_path)
     image_path = os.path.join(ROOT_PATH, image_path)
@@ -300,8 +319,10 @@ for dataset_name, (image_path, json_path, scene_path) in DOTA_SPLITS.items():
 
     load_dataset_dicts = load_geococo_dicts
     # categories = CATEGORIES[dataset_name.split("_")[0]]
-    # thing_colors = [k["color"] for k in categories]
-    # thing_classes = [k["name"] for k in categories]
+    categories = CATEGORIES
+    #pdb.set_trace()
+    thing_colors = [k["color"] for k in categories]
+    thing_classes = [k["name"] for k in categories]
 
     DatasetCatalog.register(
         dataset_name,
@@ -311,12 +332,14 @@ for dataset_name, (image_path, json_path, scene_path) in DOTA_SPLITS.items():
     )
 
     MetadataCatalog.get(dataset_name).set(
-        #thing_classes=thing_classes,
-        #thing_colors=thing_colors,
+        thing_classes=thing_classes,
+        thing_colors=thing_colors,
         json_file=json_path,
         dirname=image_path,
         scene_path=scene_path,
+        evaluator_type="coco"
     )
+    #pdb.set_trace()
 
 # True for open source;
 # Internally at fb, we register them elsewhere
