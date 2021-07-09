@@ -1271,6 +1271,8 @@ class RPointVisualizer(Visualizer):
             boxes = [BoxMode.convert(x["bbox"], x["bbox_mode"], BoxMode.XYXY_ABS) for x in annos]
 
             labels = [x["category_id"] for x in annos]
+            #pdb.set_trace()
+            # metadata에서 thing_classes의 값을 받아온다.
             names = self.metadata.get("thing_classes", None)
             if names:
                 labels = [names[i] for i in labels]
@@ -1318,7 +1320,7 @@ class RPointVisualizer(Visualizer):
             if self.metadata
             else [str(i) for i in classes]
         )
-        pdb.set_trace()
+        #pdb.set_trace()
         colors = (
             [[x / 255 for x in self.metadata.thing_colors[c]] for c in classes]
             if self.metadata is not None

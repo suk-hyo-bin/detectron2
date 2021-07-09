@@ -275,40 +275,44 @@ DOTA_SPLITS = {
 }
 
 CATEGORIES = [
+    # {"color": [206, 186, 171], "id": 0, "name": "plane"},
+    # {"color": [220, 20, 60], "id": 1, "name": "baseball-diamond"},
+    # {"color": [119, 11, 32], "id": 2, "name": "bridge"},
+    # {"color": [0, 0, 142], "id": 3, "name": "ground-track-field"},
+    # {"color": [0, 0, 230], "id": 4, "name": "small-vehicle"},
+    # {"color": [106, 0, 228], "id": 5, "name": "large-vehicle"},
+    # {"color": [0, 60, 100], "id": 6, "name": "ship"},
+    # {"color": [0, 80, 100], "id": 7, "name": "tennis-court"},
+    # {"color": [0, 0, 70], "id": 8, "name": "basketball-court"},
+    # {"color": [0, 0, 192], "id": 9, "name": "storage-tank"},
+    # {"color": [250, 170, 30], "id": 10, "name": "soccer-ball-field"},
+    # {"color": [100, 170, 30], "id": 11, "name": "roundabout"},
+    # {"color": [220, 220, 0], "id": 12, "name": "harbor"},
+    # {"color": [175, 116, 175], "id": 13, "name": "swimming-pool"},
+    # {"color": [250, 0, 30], "id": 14, "name": "helicopter"},
+    # {"color": [165, 42, 42], "id": 15, "name": "container-crane"},
+    # {"color": [255, 77, 255], "id": 16, "name": "airport"},
+    # {"color": [0, 226, 252], "id": 17, "name": "helipad"},
+
     {"color": [206, 186, 171], "id": 0, "name": "plane"},
     {"color": [220, 20, 60], "id": 1, "name": "baseball-diamond"},
-    {"color": [119, 11, 32], "id": 2, "name": "bridge"},
-    {"color": [0, 0, 142], "id": 3, "name": "ground-track-field"},
-    {"color": [0, 0, 230], "id": 4, "name": "small-vehicle"},
-    {"color": [106, 0, 228], "id": 5, "name": "large-vehicle"},
-    {"color": [0, 60, 100], "id": 6, "name": "ship"},
-    {"color": [0, 80, 100], "id": 7, "name": "tennis-court"},
-    {"color": [0, 0, 70], "id": 8, "name": "basketball-court"},
-    {"color": [0, 0, 192], "id": 9, "name": "storage-tank"},
-    {"color": [250, 170, 30], "id": 10, "name": "soccer-ball-field"},
+    {"color": [119, 11, 32], "id": 2, "name": "basketball-court"},
+    {"color": [0, 0, 142], "id": 3, "name": "bridge"},
+    {"color": [0, 0, 230], "id": 4, "name": "container-crane"},
+    {"color": [106, 0, 228], "id": 5, "name": "ground-track-field"},
+    {"color": [0, 60, 100], "id": 6, "name": "harbor"},
+    {"color": [0, 80, 100], "id": 7, "name": "helicopter"},
+    {"color": [0, 0, 70], "id": 8, "name": "helipad"},
+    {"color": [0, 0, 192], "id": 9, "name": "large-vehicle"},
+    {"color": [250, 170, 30], "id": 10, "name": "plane"},
     {"color": [100, 170, 30], "id": 11, "name": "roundabout"},
-    {"color": [220, 220, 0], "id": 12, "name": "harbor"},
-    {"color": [175, 116, 175], "id": 13, "name": "swimming-pool"},
-    {"color": [250, 0, 30], "id": 14, "name": "helicopter"},
-    {"color": [165, 42, 42], "id": 15, "name": "container-crane"},
-    {"color": [255, 77, 255], "id": 16, "name": "airport"},
-    {"color": [0, 226, 252], "id": 17, "name": "helipad"},
-
-    # "airplane": [
-    #     {"color": [0, 255, 0], "id": 0, "name": "airplane"},
-    # ],
-    # "oil-tanker": [
-    #     {"color": [0, 255, 0], "id": 0, "name": "oil-tanker"},
-    # ],
-    # "special-ship": [
-    #     {"color": [0, 255, 0], "id": 0, "name": "special-ship"},
-    # ],
-    # "train": [
-    #     {"color": [0, 255, 0], "id": 0, "name": "train"},
-    # ],
-    # "car": [
-    #     {"color": [0, 255, 0], "id": 0, "name": "car"},
-    # ],
+    {"color": [220, 220, 0], "id": 12, "name": "ship"},
+    {"color": [175, 116, 175], "id": 13, "name": "small-vehicle"},
+    {"color": [250, 0, 30], "id": 14, "name": "soccer-ball-field"},
+    {"color": [165, 42, 42], "id": 15, "name": "storage-tank"},
+    {"color": [255, 77, 255], "id": 16, "name": "swimming-pool"},
+    {"color": [0, 226, 252], "id": 17, "name": "tennis-court"},
+    
 ]
 
 #pdb.set_trace()

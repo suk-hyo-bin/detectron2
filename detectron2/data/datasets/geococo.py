@@ -1,7 +1,7 @@
 """
 GEOCOCO 데이터셋 사용에 필요한 함수입니다.
 """
-
+import pdb
 import os
 from typing import Dict, List
 
@@ -43,6 +43,8 @@ def load_geococo_dicts(image_dir: str, json_path: str) -> List[Dict]:
         for anno in anno_dict_list:
             bbox = BoxMode.convert(anno["properties"]["bbox"], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
             #rbox = convert_angle_to_det2_format(anno["properties"]["rbbox"])
+            
+            #rbox 모드는 주석 처리
 
             obj = {
                 "category_id": anno["properties"]["category_id"],
@@ -71,17 +73,20 @@ if __name__ == "__main__":
     from detectron2.data.catalog import Metadata
     from skimage.exposure import equalize_adapthist
 
-    from ..visualizer import RPointVisualizer
-    from .builtin import CATEGORIES, ROOT_PATH, SPLITS
+    from detectron2.utils.visualizer import Visualizer, RPointVisualizer
+    from detectron2.data.datasets.builtin import CATEGORIES, ROOT_PATH, DOTA_SPLITS
 
     parser = argparse.ArgumentParser(description="Save Sample of Dataset")
     parser.add_argument("--dataset-name", type=str)
     args = parser.parse_args()
 
-    dataset_paths = SPLITS[args.dataset_name]
-    dataset_pre_name = args.dataset_name.split("_")[0]
-
-    meta = Metadata().set(thing_classes=[c["name"] for c in CATEGORIES[dataset_pre_name]])
+    dataset_paths = DOTA_SPLITS[args.dataset_name]
+    #dataset_pre_name = args.dataset_name.split("_")[0]
+    #pdb.set_trace()
+    meta = Metadata().set(thing_classes=[c["name"] for c in CATEGORIES])
+    # 색을 구별하기 위해 따로 추가
+    meta = Metadata().set(thing_colors=[c["color"] for c in CATEGORIES])
+    # meta = Metadata().set(thing_classes=['plane'])
     dataset_dicts = load_geococo_dicts(
         image_dir=os.path.join(ROOT_PATH, dataset_paths[0]),
         json_path=os.path.join(ROOT_PATH, dataset_paths[1]),
